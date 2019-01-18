@@ -1,0 +1,46 @@
+ruleset hello_world_lab1 {
+  meta {
+    name "Hello World"
+    description <<
+A first ruleset for the Quickstart
+>>
+    author "Phil Windley"
+    logging on
+    shares hello, __testing
+  }
+  
+  global {
+    hello = function(obj) {
+      msg = "Hello " + obj;
+      msg
+    }
+    
+    __testing = { "queries": [ { "name": "hello", "args": [ "obj" ] },
+                           { "name": "__testing" } ],
+              "events": [ 
+                          { "domain": "echo", "type": "hello",
+                            "attrs": [ "name" ] },
+                          {"domain": "echo", "type": "monkey"
+                          // "attrs": [ "name" ] 
+                          } 
+                          ]
+            }
+  }
+  
+  rule hello_world {
+    select when echo hello
+    pre {
+      name = event:attr("name").klog("our passed in name: ")
+    }
+    send_directive("say", {"something": "Hello " + name})
+  }
+  rule hello_name {
+    select when echo monkey
+    pre{
+      // name = event:attr("name").defaultsTo("Monkey")
+      name = (event:attr("name") != null) => event:attr("name")
+        | "Monkey"
+    }
+    send_directive("say", {"something": "Hello " + name})
+  }
+}

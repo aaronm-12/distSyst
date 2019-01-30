@@ -1,0 +1,36 @@
+ruleset twilioTester {
+  meta {
+    use module myKeys
+    use module myTwilio with
+      account_sid = keys:twilio("sid") and
+      auth_token = keys:twilio("auth")
+      
+    shares __testing, messages
+    logging on
+  }
+
+  global {
+    messages = function(from, to) {
+      base_url = <<https://#{keys:twilio("sid")}:#{keys:twilio("auth")}@api.twilio.com/2010-04-01/Accounts/#{keys:twilio("sid")}/>>;
+      yup = http:get(base_url + "Messages.json", qs =
+                {"From":from,
+                 "To":to
+      });
+      yup{"content"}.decode()
+    }
+        
+    __testing = { "events": [ { "domain": "test", "type": "new_message",
+                        "attrs": [ "to", "from", "message" ] } ],
+                  "queries": [ { "name": "messages", "args": [ "from", "to" ] },
+                       { "name": "__testing" } ]
+        }
+  }
+  
+  rule test_send_sms {
+    select when test new_message
+    myTwilio:send_sms(event:attr("to"),
+                    event:attr("from"),
+                    event:attr("message")
+                   )
+  }
+}

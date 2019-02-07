@@ -10,9 +10,6 @@ ruleset wovyn_base {
   }
   
   global {
-    //temperature_threshold
-    //sms number
-    
     __testing = { "events": [ { "domain": "wovyn", "type": "heartbeat",
                             "attrs": [ "genericThing" ] } ]
             }
@@ -24,41 +21,41 @@ ruleset wovyn_base {
       }
     }}
     
-    temperature_threshold = "60"
+    temperature_threshold = "70"
     to_number = "8014626297"
     from_number = "+13852573850"
   }
   
   rule process_heartbeat {
   select when wovyn heartbeat
-    pre {
-      // never_used = event:attrs.klog("attrs").decode()
-    }
     if(event:attr("genericThing") != null) then
         send_directive("say", {"process": "Hello"})
 
     fired {
       raise wovyn event "new_temperature_reading" 
         attributes { 
-          "temperature":gen{["genericThing", "data", "temperature"]}[0]{"temperatureF"}, 
-          //"temperature":event:attr("genericThing"){["data", "temperature", "temperatureF"]}, 
+          // "temperature":gen{["genericThing", "data", "temperature"]}[0]{"temperatureF"}, 
+          "temperature":event:attr("genericThing"){["data", "temperature"]}[0]{"temperatureF"}, 
           "timestamp": time:now()
         }
     }
   }
   rule find_high_temps {
   select when wovyn new_temperature_reading
+      pre {
+        mess = event:attr("temperature") + " at " + event:attr("timestamp")
+      } 
       if(event:attr("temperature") > temperature_threshold) then 
-        send_directive("say", {"temperature violation": event:attr("temperature")});
+        send_directive("say", {"temperature violation": mess});
       fired {
         raise wovyn event "threshold_violation"
-     }
+     } 
   }
   
   rule threshold_notification {
   select when wovyn threshold_violation
       every {
-        send_directive("say", {"notify": "Hello"});
+        // send_directive("say", {"notify": "Hello"});
         myTwilio:send_sms(
           to_number,
           from_number,

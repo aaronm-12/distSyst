@@ -1,0 +1,69 @@
+ruleset wovyn_base {
+  meta {
+    use module myKeys
+    use module myTwilio with
+      account_sid = keys:twilio{"sid"} and
+      auth_token = keys:twilio{"auth"}
+      
+    shares __testing
+    logging on
+  }
+  
+  global {
+    //temperature_threshold
+    //sms number
+    
+    __testing = { "events": [ { "domain": "wovyn", "type": "heartbeat",
+                            "attrs": [ "genericThing" ] } ]
+            }
+    gen = {"genericThing":{
+      "typeId":"2.1.2","typeName":"generic.simple.temperature","healthPercent":78.33,"heartbeatSeconds":5,"data":{
+        "temperature":[
+          {"name":"enclosure temperature","transducerGUID":"285136230A00008D","units":"degrees","temperatureF":70.25,"temperatureC":21.25}
+          ]
+      }
+    }}
+    
+    temperature_threshold = "60"
+    to_number = "8014626297"
+    from_number = "+13852573850"
+  }
+  
+  rule process_heartbeat {
+  select when wovyn heartbeat
+    pre {
+      // never_used = event:attrs.klog("attrs").decode()
+    }
+    if(event:attr("genericThing") != null) then
+        send_directive("say", {"process": "Hello"})
+
+    fired {
+      raise wovyn event "new_temperature_reading" 
+        attributes { 
+          "temperature":gen{["genericThing", "data", "temperature"]}[0]{"temperatureF"}, 
+          //"temperature":event:attr("genericThing"){["data", "temperature", "temperatureF"]}, 
+          "timestamp": time:now()
+        }
+    }
+  }
+  rule find_high_temps {
+  select when wovyn new_temperature_reading
+      if(event:attr("temperature") > temperature_threshold) then 
+        send_directive("say", {"temperature violation": event:attr("temperature")});
+      fired {
+        raise wovyn event "threshold_violation"
+     }
+  }
+  
+  rule threshold_notification {
+  select when wovyn threshold_violation
+      every {
+        send_directive("say", {"notify": "Hello"});
+        myTwilio:send_sms(
+          to_number,
+          from_number,
+          "temperature violation!"
+       );
+      } 
+  }
+}

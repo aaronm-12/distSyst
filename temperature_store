@@ -1,69 +1,77 @@
-ruleset wovyn_base {
+ruleset temperature_store {
   meta {
-    use module myKeys
-    use module myTwilio with
-      account_sid = keys:twilio{"sid"} and
-      auth_token = keys:twilio{"auth"}
-      
-    shares __testing
-    logging on
+   
+    provides temperatures, threshold_violations, inrange_temperatures
+    shares __testing, temperatures, threshold_violations, inrange_temperatures, yup
   }
   
   global {
-    __testing = { "events": [ { "domain": "wovyn", "type": "heartbeat",
-                            "attrs": [ "genericThing" ] } ]
-            }
-    gen = {"genericThing":{
-      "typeId":"2.1.2","typeName":"generic.simple.temperature","healthPercent":78.33,"heartbeatSeconds":5,"data":{
-        "temperature":[
-          {"name":"enclosure temperature","transducerGUID":"285136230A00008D","units":"degrees","temperatureF":70.25,"temperatureC":21.25}
-          ]
-      }
-    }}
+    threshold = 77.4
+    init = { "never": -1 }
     
-    temperature_threshold = "80"
-    to_number = "8014626297"
-    from_number = "+13852573850"
+    temperatures = function() {
+      ent:temp
+    }
+    
+    yup = function() {
+      {"hello": "hello"}
+    }
+    
+    threshold_violations = function() {
+      ent:violation
+    }
+    
+    //non threshold_violations
+    inrange_temperatures = function() {
+      ent:temp.filter(function(v,k){v < threshold})
+    }
+    
+    __testing = { "events": [ { "domain": "wovyn", "type": "new_temperature_reading",
+                            "attrs": ["temperature", "timestamp"] },
+                              { "domain": "sensor", "type": "reading_reset",
+                            "attrs": [] }
+                            ],
+                  "queries": [  { "name": "temperatures", "args": [ ] },
+                                { "name": "threshold_violations", "args": [ ] },
+                                { "name": "inrange_temperatures", "args": [ ] }
+                  ]
+            }
   }
   
-  rule process_heartbeat {
-  select when wovyn heartbeat
-    if(event:attr("genericThing") != null) then
-        send_directive("say", {"process": "Hello"})
-
-    fired {
-      raise wovyn event "new_temperature_reading" 
-        attributes { 
-          // "temperature":gen{["genericThing", "data", "temperature"]}[0]{"temperatureF"}, 
-          "temperature":event:attr("genericThing"){["data", "temperature"]}[0]{"temperatureF"}, 
-          "timestamp": time:now()
-        }
+  rule collect_temperatures {
+    select when wovyn new_temperature_reading
+    pre {
+      temp = event:attr("temperature").as("Number")
+    }
+    
+    send_directive("added", {"time": event:attr("timestamp"), "temp": temp});
+    
+    always {
+      ent:temp := ent:temp.put(event:attr("timestamp"), temp);
     }
   }
-  rule find_high_temps {
-  select when wovyn new_temperature_reading
-      pre {
-        mess = event:attr("temperature") + " at " + event:attr("timestamp")
-      } 
-      if(event:attr("temperature") > temperature_threshold) then 
-        send_directive("say", {"temperature violation": mess});
-      fired {
-        raise wovyn event "threshold_violation" attributes { 
-          "temperature" : event:attr("temperature"), 
-          "timestamp" : event:attr("timestamp")
-        }
-     } 
+  rule collect_threshold_violations {
+    select when wovyn threshold_violation
+    pre {
+      temp = event:attr("temperature").as("Number")
+    }
+    
+    // if(temp > threshold) then 
+      send_directive("added violation", {"time": event:attr("timestamp"), "temp": temp});
+    
+    always {
+      ent:violation := ent:violation.put(event:attr("timestamp"), temp);
+    }
   }
   
-  rule threshold_notification {
-  select when wovyn threshold_violation
-      every {
-        // send_directive("say", {"notify": "Hello"});
-        myTwilio:send_sms(
-          to_number,
-          from_number,
-          "temperature violation!"
-       );
-      } 
+  rule clear_temeratures {
+    select when sensor reading_reset
+    
+    send_directive("cleared", {"time": time:now()});
+
+    always {
+      ent:temp := init;
+      ent:violation := init
+    }
   }
 }

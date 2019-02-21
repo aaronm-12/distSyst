@@ -1,0 +1,236 @@
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+
+<style>
+    table#tablePast {
+        border-collapse: collapse;
+        border: 1px solid black;
+        text-align: center;
+        width: 50%;
+    }
+
+    table#tablePast td, th {
+        font-size: 20px;
+        border-bottom: 1px solid black;
+        padding: 5px 30px;
+    }
+
+    h1,h2 {
+        width: 25%;
+        margin:0px;
+    }
+    h3 {
+        width: 15%;
+        margin: 0px;
+    }
+</style>
+
+<div>
+    <h1 style="display:inline-block;" id="name">a</h1>
+    <button style="display:inline-block;" id="buttonName" type="button">edit</button>
+</div>
+<p></p>
+
+<div>
+    <h2 style="display:inline-block;"> Current Temperature</h2>
+    <h2 style="display:inline-block; font-weight: normal;" id="current"> None </h2>
+</div>
+<div>
+    <h3 style="display:inline-block;" id="location">BYU</h3>
+    <button style="display:inline-block;" id="buttonLocation" type="button">edit</button>
+</div>
+<p><br /></p>
+<h2> Past Temperatures </h2>
+<table style="margin:10px" id="tablePast">
+    <tr>
+        <th> Timestamp </th>
+        <th> Temperature </th>
+    </tr>
+    <tr>
+        <td id="s1"></td>
+        <td id="t1"></td>
+    </tr>
+    <tr>
+        <td id="s2"></td>
+        <td id="t2"></td>
+    </tr>
+    <tr>
+        <td id="s3"></td>
+        <td id="t3"></td>
+    </tr>
+</table>
+
+<h3 style="font-weight: normal; white-space:nowrap"> Threshold violations are listed in red </h3>
+<p><br /></p>
+<div>
+    <h3 style="display:inline-block"> Threshold: </h3>
+    <h3 style="display:inline-block; font-weight: normal;" id="threshold">100</h3>
+    <button style="display:inline-block;" id="buttonThreshold" type="button">edit</button>
+</div>
+<p></p>
+<div>
+    <h3 style="display:inline-block"> Notifies: </h3>
+    <h3 style="display:inline-block; font-weight: normal;" id="sms">0000000000</h3>
+    <button style="display:inline-block;" id="buttonSms" type="button">edit</button>
+</div>
+
+<button type="button" id="stopPoll">
+    Stop Poll
+</button>
+
+<!-- pico -->
+<script>
+    function updateName(data) {
+        var pUrl = "http://localhost:8080/sky/event/DAh16XAwWQp1y6FtR3jixy/5/sensor/profile_updated";
+        $.post(pUrl, {"name":data});
+    }
+    function updateLocation(data) {
+        var pUrl = "http://localhost:8080/sky/event/DAh16XAwWQp1y6FtR3jixy/5/sensor/profile_updated";
+        $.post(pUrl, {"location":data});
+    }
+    function updateThreshold(data) {
+        var pUrl = "http://localhost:8080/sky/event/DAh16XAwWQp1y6FtR3jixy/5/sensor/profile_updated";
+        $.post(pUrl, {"threshold":data});
+    }
+    function updateSms(data) {
+        var pUrl = "http://localhost:8080/sky/event/DAh16XAwWQp1y6FtR3jixy/5/sensor/profile_updated";
+        $.post(pUrl, {"sms":data});
+    }
+
+</script>
+
+<!-- edit buttons -->
+<script>
+    function EditButton(but, tex, fun) {
+        var clicked = false;
+        but.onclick = function(){
+            if(!clicked) {
+                clicked = true;
+                tex.contentEditable = true;
+                but.innerHTML = "submit";
+            } else {
+                clicked = false;
+                tex.contentEditable = false;
+                but.innerHTML = "edit"
+                fun(tex.innerHTML);
+            }
+        }
+    }
+
+    function nothing(data) {
+        console.log("nothing");
+    }
+
+    var locationEdit = new EditButton(document.getElementById("buttonLocation"),
+        document.getElementById("location"), updateLocation);
+    var locationEdit = new EditButton(document.getElementById("buttonThreshold"),
+        document.getElementById("threshold"), updateThreshold);
+    var locationEdit = new EditButton(document.getElementById("buttonSms"),
+        document.getElementById("sms"), updateSms);
+    var locationEdit = new EditButton(document.getElementById("buttonName"),
+        document.getElementById("name"), updateName);
+</script>
+
+<!-- Table defintion -->
+<script>
+    function Table(){}
+
+    Table.prototype.update = function(q) {
+        if( q.getSize() != 4) { return; }
+
+        <!-- Current temp -->
+        $("#current").html(q.getValue(0));
+
+        if(parseFloat($("#current").html()) > parseInt($("#threshold").html())) {
+            $("#current").css("color","red");
+        }
+
+        <!-- Past temps -->
+        var table = document.getElementById("tablePast");
+        for(var i = 1; i < table.rows.length; i++) {
+            var row = table.rows[i];
+            row.cells[0].innerHTML = q.getKey(i);
+            row.cells[1].innerHTML = q.getValue(i);
+
+            <!-- Threshold violations -->
+            var val = parseFloat(row.cells[1].innerHTML);
+            if(val > parseInt($("#threshold").html())) {
+                row.cells[1].style.color = "red";
+            }
+        }
+    }
+</script>
+
+<!-- Queue definition -->
+<script>
+    function Queue() {
+        this.data = [{"": ""}, {"": ""}, {"": ""}, {"": ""}];
+    }
+
+    <!--Maintains size-->
+    Queue.prototype.update = function(value) {
+        if(this.data.length == 0) { return; }
+
+        this.data.pop();
+        this.data.unshift(value);
+    }
+
+    Queue.prototype.getSize = function(value) {
+        return this.data.length;
+    }
+
+    Queue.prototype.getKey = function(i) {
+        return Object.keys(this.data[i]);
+    }
+
+    Queue.prototype.getValue = function(i) {
+        return Object.values(this.data[i]);
+    }
+</script>
+
+<!-- Main -->
+<script>
+    $(document).ready(function() {
+        var q = new Queue();
+        var t = new Table();
+
+        function initialize() {
+            var pUrl = "http://localhost:8080/sky/cloud/DAh16XAwWQp1y6FtR3jixy/temperature_store/temperatures";
+
+            $.get(pUrl, function(data) {
+                if(data != null) {
+                    var keys = Object.keys(data);
+                    for(var i = keys.length-1; i >= 0; i--) {
+                        var pair = {};
+                        var time = keys[i].substring(11,19);
+                        pair[time] = data[keys[i]];
+                        q.update(pair);
+                    }
+
+                    t.update(q);
+                }
+            });
+        }
+
+        function poll() {
+            var pUrl = "http://localhost:8080/sky/cloud/DAh16XAwWQp1y6FtR3jixy/temperature_store/temperatures";
+
+            $.get(pUrl, function(data) {
+                    if(data != null) {
+                        var pair = {};
+                        var length = Object.keys(data).length;
+                        var time = Object.keys(data)[length-2].substring(11,19);
+                        pair[time] = Object.values(data)[length-2];
+                        q.update(pair);
+                        t.update(q);
+                    }
+            });
+        }
+
+        initialize();
+
+        var polling = setInterval(poll, 10000);
+        $("#stopPoll").click(function(){
+            clearInterval(polling)
+        });
+    });
+</script>

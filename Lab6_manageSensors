@@ -1,0 +1,124 @@
+ruleset manageSensors {
+  meta {
+    shares __testing, getSensors, getTemperatures
+    
+    logging on
+  }
+
+  global {
+    threshold = 80
+    sms = 8014626297
+    eci = -1
+    init = {"init":-1};
+    
+    getSensors = function() {
+      ent:sensors.defaultsTo(init); //name, id
+    }
+    getTemperatures = function() {
+        sensors = ent:sensors;
+        getTempss(sensors.values().length()-1, sensors)
+    }
+    getTempss = function(i, sensors) {
+      cur = [{}.put(sensors.keys()[i], getTemps(sensors.values()[i]))];
+      (i == 0) => [] | cur.union(getTempss(i-1, sensors))
+    }
+    
+    
+    
+    __testing = { 
+        "queries": [ 
+          { "name": "getSensors", "args": [ ] },
+          { "name": "getTemperatures", "args": [ ] }
+        ],
+        "events": [ 
+          { "domain": "sensor", "type": "newSensor","attrs": ["name"] },
+          { "domain": "sensor", "type": "unneededSensor", "attrs": ["name"] }
+        ]
+    }
+    
+    updProfile = defaction(eci, name, threshold, sms) {
+      base_url = <<http://localhost:8080/sky/event/>> + eci + <</5/sensor/profile_updated>>
+        http:post(base_url, form =
+                {"name":name,
+                "threshold":threshold,
+                "sms":sms
+        });
+    }
+    
+    getTemps = function(eci) {
+      base_url = <<http://localhost:8080/sky/cloud/>> + eci + <</temperature_store/temperatures>>;
+      http:get(base_url){"content"}
+    }
+  }
+  
+  
+  rule destroySensorError {
+    select when sensor unneededSensor
+    pre {
+      notExists = ent:sensors{event:attr("name")} == null;
+    } 
+
+    if notExists then
+      send_directive("error", {"doesn't exist": event:attr("name")});
+  }
+  
+  rule createSensorError {
+    select when sensor newSensor
+    pre {
+      exists = ent:sensors{event:attr("name")} != null
+    } 
+
+    if exists then
+      send_directive("error", {"already exists": event:attr("name")});
+  }
+  
+  rule createSensor {
+    select when sensor newSensor
+    pre {
+      notExists = ent:sensors{event:attr("name")} == null
+    }
+    
+    if notExists then
+      send_directive("sensor", {"created": event:attr("name")});
+
+      
+    fired {
+      ent:sensors := ent:sensors.defaultsTo(init).put(event:attr("name"), eci);
+      raise wrangler event "child_creation"
+        attributes { 
+          "name": event:attr("name"), 
+          "rids": ["temperature_store", "wovyn_base", "sensor_profile"]};
+    }
+  }
+  
+  rule created {
+    select when wrangler child_initialized
+   
+    every {
+      send_directive("sensor", {"finished creating": event:attr("rs_attrs"){"name"}});
+      updProfile(event:attr("eci"),event:attr("rs_attrs"){"name"}, threshold, sms);
+    }
+    
+    always {
+      ent:sensors{event:attr("rs_attrs"){"name"}} := event:attr("eci");
+      
+    }
+  }
+  
+  rule destroySensor {
+    select when sensor unneededSensor
+    pre {
+      exists = ent:sensors{event:attr("name")} != null
+    } 
+
+    if exists then
+       send_directive("sensor", {"destroyed": event:attr("name")});
+
+    
+    fired {
+      raise wrangler event "child_deletion"
+        attributes {"name": event:attr("name")};
+      clear ent:sensors{event:attr("name")};
+    }
+  }
+}

@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title></title>
+</head>
+<body>
+    <button id="bTest" type="button">run test</button>
+    <p style="white-space: pre-line" id="pLog"></p>
+
+    <script>
+        function getProfile(ind) {
+            var pUrl = "http://localhost:8080/sky/cloud/BeUrDbXd9PPNg18BLZADxR/manageSensors/getSensors";
+            $.post(pUrl, {"name":name}, function(data) {
+                if(data == null) { return; }
+                var eci = Object.values(data)[ind];
+                if(eci == -1 || eci == undefined) {
+                    console.log("can't access eci = " + eci);
+                    return;
+                } else {
+                    var qUrl = "http://localhost:8080/sky/cloud/" + eci + "/sensor_profile/getInfo";
+                    $.get(qUrl, function(data) {
+                        $("#pLog").append(JSON.stringify(data) + "\n");
+                    });
+                }
+            });
+        }
+
+        function addTemperature(ind, temp) {
+            var pUrl = "http://localhost:8080/sky/cloud/BeUrDbXd9PPNg18BLZADxR/manageSensors/getSensors";
+            $.post(pUrl, {"name":name}, function(data) {
+                if(data == null) { return; }
+                var eci = Object.values(data)[ind];
+                if(eci == -1 || eci == undefined) {
+                    console.log("can't access eci = " + eci);
+                    return;
+                } else {
+                    var qUrl = "http://localhost:8080/sky/event/" + eci + "/5/wovyn/new_temperature_reading";
+                    $.post(qUrl, {"temperature": temp, "timestamp": "maybe"});
+                }
+            });
+        }
+
+        function createSensor(name) {
+            var pUrl = "http://localhost:8080/sky/event/BeUrDbXd9PPNg18BLZADxR/5/sensor/newSensor";
+            $.post(pUrl, {"name":name});
+        }
+
+        function getSensors() {
+            var pUrl = "http://localhost:8080/sky/cloud/BeUrDbXd9PPNg18BLZADxR/manageSensors/getSensors";
+            $.post(pUrl, function(data) {
+                $("#pLog").append(JSON.stringify(data) + "\n");
+            });
+        }
+
+        function destroySensor(name) {
+            if(name != "init") {
+                var pUrl = "http://localhost:8080/sky/event/BeUrDbXd9PPNg18BLZADxR/5/sensor/unneededSensor";
+                $.post(pUrl, {"name":name});
+            }
+        }
+
+        function destroyAllSensors() {
+            var pUrl = "http://localhost:8080/sky/cloud/BeUrDbXd9PPNg18BLZADxR/manageSensors/getSensors";
+            $.post(pUrl, {"name":name}, function(data) {
+                var keys = Object.keys(data);
+                for(var i = 0; i < keys.length; i++) {
+                    destroySensor(keys[i]);
+                }
+            });
+        }
+
+        function getTemperatures() {
+            var pUrl = "http://localhost:8080/sky/cloud/BeUrDbXd9PPNg18BLZADxR/manageSensors/getTemperatures";
+            $.get(pUrl, function(data) {
+                $("#pLog").append(JSON.stringify(data) + "\n");
+            });
+        }
+
+        function initTemps(eci) {
+            if(eci != -1) {
+                var pUrl = "http://localhost:8080/sky/event/" + eci + "/5/sensor/reading_reset";
+                $.post(pUrl);
+            }
+        }
+
+        function resetTemps() {
+            var pUrl = "http://localhost:8080/sky/cloud/BeUrDbXd9PPNg18BLZADxR/manageSensors/getSensors";
+            $.post(pUrl, {"name":name}, function(data) {
+                var values = Object.values(data);
+                for(var i = 0; i < values.length; i++) {
+                    initTemps(values[i]);
+                }
+            });
+         }
+    </script>
+    <script>
+        var createNSensors = function(n){
+            for(var i = 0; i < n; i++) {
+                createSensor("sensor" + i);
+            }
+        }
+
+        var sleep = function(milliseconds) {
+              var start = new Date().getTime();
+              for (var i = 0; i < 1e7; i++) {
+                if ((new Date().getTime() - start) > milliseconds){
+                  break;
+                }
+              }
+        }
+        var testing2 = function() {
+            $.ajaxSetup({async: false});
+
+            $("#pLog").html("no sensors: ");
+            getSensors();
+            $("#pLog").append("adding 4 sensors: ");
+            createNSensors(4);
+            getSensors();
+            $("#pLog").append("adding temperature 100 to sensor1: ");
+            resetTemps();
+            addTemperature(2, 100);
+            getTemperatures();
+            $("#pLog").append("removing all sensors: ");
+            destroyAllSensors();
+            getSensors();
+
+            $("#pLog").append("allowing wovyn to add temperature to sensor: ");
+            getTemperatures();
+        }
+
+        var testing = function() {
+            $.ajaxSetup({async: false});
+
+            $("#pLog").append("no sensors: ");
+            getSensors();
+            $("#pLog").append("adding 4 sensors: ");
+            createNSensors(4);
+            getSensors();
+            $("#pLog").append("checking profile sensor2: ");
+            getProfile(3);
+            $("#pLog").append("adding temperature 100 to sensor1: ");
+            resetTemps();
+            addTemperature(2, 100);
+            getTemperatures();
+            $("#pLog").append("removing sensor2: ");
+            destroySensor("sensor2");
+            getSensors();
+            $("#pLog").append("removing all sensors: ");
+            destroyAllSensors();
+            getSensors();
+        }
+    </script>
+    <script>
+        $("#bTest").click(function(){
+            testing();
+        });
+        $("#bDelete").click(function(){
+            destroySensor();
+        });
+    </script>
+
+</body>
+</html>
+

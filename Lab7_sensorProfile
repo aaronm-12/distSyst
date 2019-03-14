@@ -1,0 +1,51 @@
+ruleset sensor_profile {
+  meta {
+   
+    provides getInfo
+    shares __testing, getInfo
+  }
+  
+  global {
+    //attr: location, name, threshold, sms
+    getInfo = function() {
+      {
+        "name":ent:name.defaultsTo("a"),
+        "location":ent:location.defaultsTo("byu"),
+        "threshold":ent:threshold.defaultsTo("100").as("Number"),
+        "sms":ent:sms.defaultsTo("0000000000")
+      }
+    }
+    
+    __testing = { "events": [ { "domain": "sensor", "type": "profile_updated",
+                            "attrs": ["location", "threshold"] },
+                            { "domain": "sensor", "type": "profile_updated",
+                            "attrs": ["threshold"] }
+                            ],
+                  "queries": [  { "name": "getInfo", "args": [ ] }
+                  ]
+            }
+  }
+  
+  rule update {
+    select when sensor profile_updated
+    
+    always {
+      ent:name := event:attr("name").klog() if event:attr("name") != null;
+      ent:location := event:attr("location").klog() if event:attr("location") != null;
+      ent:threshold := event:attr("threshold").klog() if event:attr("threshold") != null;
+      ent:sms := event:attr("sms").klog() if event:attr("sms") != null;
+    }
+  }
+  
+      
+  rule auto_accept {
+    select when wrangler inbound_pending_subscription_added
+  
+    send_directive("say", {"subscription": "auto accepted"});
+    
+    fired {
+      raise wrangler event "pending_subscription_approval"
+        attributes event:attrs
+    }
+  }
+}

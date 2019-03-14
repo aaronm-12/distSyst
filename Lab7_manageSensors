@@ -1,0 +1,180 @@
+ruleset manageSensors {
+  meta {
+    use module io.picolabs.subscription alias Subscriptions
+    
+    shares __testing, getSensors, getTemperatures
+    
+    logging on
+  }
+
+  global {
+    threshold = 80
+    sms = 8014626297
+    eci = -1
+    init = {"init":-1};
+    
+    getSensors = function() {
+      Subscriptions:established("Tx_role","sensor").defaultsTo(init)
+      // ent:sensors.defaultsTo(init); //name, id
+    }
+  
+    getTemperatures = function() {
+      Subscriptions:established("Tx_role","sensor").defaultsTo(init).map(function(x) {
+          getTemps(x{"Tx"}) 
+      })
+    // ent:sensors.defaultsTo(init).map(function(v,k){
+    //     // k != "init" => getTemps(v) | "none"
+    //     v
+    //   })
+    }
+    
+    
+    
+    __testing = { 
+        "queries": [ 
+          { "name": "getSensors", "args": [ ] },
+          { "name": "getTemperatures", "args": [ ] }
+        ],
+        "events": [ 
+          { "domain": "sensor", "type": "newSensor","attrs": ["name"] },
+          { "domain": "sensor", "type": "unneededSensor", "attrs": ["name"] },
+          { "domain": "sensor", "type": "introduction", "attrs" : ["eci"] }
+        ]
+    }
+    
+    updProfile = defaction(eci, name, threshold, sms) {
+      base_url = <<http://localhost:8080/sky/event/>> + eci + <</5/sensor/profile_updated>>
+        http:post(base_url, form =
+                {"name":name,
+                "threshold":threshold,
+                "sms":sms
+        });
+    }
+    
+    getTemps = function(eci) {
+      base_url = <<http://localhost:8080/sky/cloud/>> + eci + <</temperature_store/temperatures>>;
+      http:get(base_url){"content"}
+    }
+  }
+  
+  
+  rule destroySensorError {
+    select when sensor unneededSensor
+    pre {
+      notExists = ent:sensors{event:attr("name")} == null;
+    } 
+
+    if notExists then
+      send_directive("error", {"doesn't exist": event:attr("name")});
+  }
+  
+  rule createSensorError {
+    select when sensor newSensor
+    pre {
+      exists = ent:sensors{event:attr("name")} != null
+    } 
+
+    if exists then
+      send_directive("error", {"already exists": event:attr("name")});
+  }
+  
+  rule createSensor {
+    select when sensor newSensor
+    pre {
+      notExists = ent:sensors{event:attr("name")} == null
+    }
+    
+    if notExists then
+      send_directive("sensor", {"created": event:attr("name")});
+
+  
+    fired {
+      ent:sensors := ent:sensors.defaultsTo(init).put(event:attr("name"), eci);
+      raise wrangler event "child_creation"
+        attributes { 
+          "name": event:attr("name"), 
+          "rids": ["temperature_store", "wovyn_base", "sensor_profile"]};
+    }
+  }
+  
+  rule created {
+    select when wrangler child_initialized
+   
+    every {
+      send_directive("sensor", {"finished creating": event:attr("rs_attrs"){"name"}});
+      updProfile(event:attr("eci"),event:attr("rs_attrs"){"name"}, threshold, sms);
+    }
+    
+    always {
+      ent:sensors{event:attr("rs_attrs"){"name"}} := event:attr("eci");
+      raise wrangler event "subscription" attributes
+         { "name" : event:attr("rs_attrs"){"name"},
+           "Rx_role": "manager",
+           "Tx_role": "sensor",
+           "channel_type": "subscription",
+           "wellKnown_Tx" : event:attr("eci")
+         }
+    }
+  }
+  
+  rule destroySensor {
+    select when sensor unneededSensor
+    pre {
+      exists = ent:sensors{event:attr("name")} != null
+    } 
+
+    if exists then
+       send_directive("sensor", {"destroyed": event:attr("name")});
+
+    
+    fired {
+      raise wrangler event "child_deletion"
+        attributes {"name": event:attr("name")};
+      clear ent:sensors{event:attr("name")};
+    }
+  }
+  
+  rule sensorIntroduction {
+    select when sensor introduction
+      // introduce mischief pico to sensor pico
+      every {
+        send_directive("sensor", {"introducing": event:attr("eci")});
+        event:send(
+          {
+            "eci": event:attr("eci"), "eid": "subscription",
+            "domain": "wrangler", "type": "subscription",
+            "attrs": { 
+               "Rx_role": "sensor",
+               "Tx_role": "man2",
+               "channel_type": "subscription",
+               "wellKnown_Tx": "3kx3Us11EVLXiwweFdrccP"
+            } 
+          }
+         )
+      }
+  }
+  
+  rule auto_accept {
+    select when wrangler inbound_pending_subscription_added
+  
+    send_directive("say", {"subscription": "auto accepted"});
+    
+    fired {
+      raise wrangler event "pending_subscription_approval"
+        attributes event:attrs
+    }
+  }
+  
+  rule sensor_violation {
+    select when sensor threshold_violation
+    pre {
+      mess = "temperature violation!!!" + event:violation;
+    }
+    fired {
+      raise sensor event "notification"
+        attributes {
+          "notification": mess 
+        }
+      }
+  }
+}

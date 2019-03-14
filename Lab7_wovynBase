@@ -1,0 +1,89 @@
+ruleset wovyn_base {
+  meta {
+    use module io.picolabs.subscription alias Subscriptions
+    use module myKeys
+    use module myTwilio with
+      account_sid = keys:twilio{"sid"} and
+      auth_token = keys:twilio{"auth"}
+    use module sensor_profile
+    shares __testing
+    logging on
+  }
+  
+  global {
+    __testing = { "events": [ { "domain": "wovyn", "type": "heartbeat",
+                            "attrs": [ "genericThing" ] },
+                              { "domain": "wovyn", "type": "new_temperature_reading",
+                            "attrs": [ "timestamp", "temperature" ] }
+                            ]
+            }
+    gen = {"genericThing":{
+      "typeId":"2.1.2","typeName":"generic.simple.temperature","healthPercent":78.33,"heartbeatSeconds":5,"data":{
+        "temperature":[
+          {"name":"enclosure temperature","transducerGUID":"285136230A00008D","units":"degrees","temperatureF":70.25,"temperatureC":21.25}
+          ]
+      }
+    }}
+    
+    from_number = "+13852573850"
+  }
+  
+  rule process_heartbeat {
+  select when wovyn heartbeat
+    if(event:attr("genericThing") != null) then
+        send_directive("say", {"process": "Hello"})
+
+    fired {
+      raise wovyn event "new_temperature_reading" 
+        attributes { 
+          // "temperature":gen{["genericThing", "data", "temperature"]}[0]{"temperatureF"}, 
+          "temperature":event:attr("genericThing"){["data", "temperature"]}[0]{"temperatureF"}, 
+          "timestamp": time:now()
+        }
+    }
+  }
+  rule find_high_temps {
+  select when wovyn new_temperature_reading
+      pre {
+        mess = sensor_profile:getInfo(){"name"} + ", " + event:attr("temperature") + " greater than " + sensor_profile:getInfo(){"threshold"}
+            + " at " + event:attr("timestamp") + " in " + sensor_profile:getInfo(){"location"};
+        managerId = Subscriptions:established("Tx_role", "manager")[0]{"Tx"}
+      } 
+      
+      if(event:attr("temperature") > sensor_profile:getInfo(){"threshold"}) then 
+        every {
+          send_directive("say", {"temperature violation": mess})
+        
+          event:send(
+            {
+              "eci": managerId, "eid": "manageSensors",
+              "domain": "sensor", "type": "threshold_violation",
+              "attrs": {
+                "violation" : event:attr("temperature")
+              } 
+            }
+          );
+        }
+      // fired {
+        // raise wovyn event "threshold_violation" 
+        // attributes { 
+          // "temperature" : event:attr("temperature"), 
+          // "timestamp" : event:attr("timestamp")
+        // }
+    // } 
+  }
+  
+  rule invalid_threshold_notification {
+  select when wovyn threshold_violation where sensor_profile:getInfo(){"sms"} != "8014626297"
+      send_directive("error", {"invalid number": sensor_profile:getInfo(){"sms"}});
+  }
+  
+  // rule threshold_notification {
+  // select when wovyn threshold_violation where sensor_profile:getInfo(){"sms"} == "8014626297"
+  //     myTwilio:send_sms(
+  //       sensor_profile:getInfo(){"sms"},
+  //       from_number,
+  //       "temperature violation!!!"
+  //   );
+  // }
+}

@@ -1,0 +1,29 @@
+ruleset managerProfile {
+  meta {
+    use module myKeys
+    use module myTwilio with
+      account_sid = keys:twilio{"sid"} and
+      auth_token = keys:twilio{"auth"}
+    shares __testing
+    logging on
+  }
+  
+  global {
+    __testing = { "events": [ { "domain": "sensor", "type": "notification",
+                            "attrs": [] }
+                            ]
+            }
+    
+    toNumber = "8014626297"
+    fromNumber = "+13852573850"
+  }
+  
+  rule send_notification {
+  select when sensor notification
+      myTwilio:send_sms(
+        toNumber,
+        fromNumber,
+        event:attr("notification")
+     );
+  }
+}

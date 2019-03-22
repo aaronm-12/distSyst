@@ -1,0 +1,99 @@
+ruleset temperature_store {
+  meta {
+    use module io.picolabs.subscription alias Subscriptions
+
+    provides temperatures, threshold_violations, inrange_temperatures
+    shares __testing, temperatures, threshold_violations, inrange_temperatures, yup
+  }
+  
+  global {
+    threshold = 77.4
+    init = { "never": -1 }
+    
+    temperatures = function() {
+      ent:temp
+    }
+    
+    yup = function() {
+      {"hello": "hello"}
+    }
+    
+    threshold_violations = function() {
+      ent:violation
+    }
+    
+    //non threshold_violations
+    inrange_temperatures = function() {
+      ent:temp.filter(function(v,k){v < threshold})
+    }
+    
+    __testing = { "events": [ { "domain": "wovyn", "type": "new_temperature_reading",
+                            "attrs": ["temperature", "timestamp"] },
+                              { "domain": "sensor", "type": "reading_reset",
+                            "attrs": [] }
+                            ],
+                  "queries": [  { "name": "temperatures", "args": [ ] },
+                                { "name": "threshold_violations", "args": [ ] },
+                                { "name": "inrange_temperatures", "args": [ ] }
+                  ]
+            }
+  }
+  
+  rule collect_temperatures {
+    select when wovyn new_temperature_reading
+    pre {
+      temp = event:attr("temperature").as("Number")
+    }
+    
+    send_directive("added", {"time": event:attr("timestamp"), "temp": temp});
+    
+    always {
+      ent:temp := ent:temp.put(event:attr("timestamp"), temp);
+    }
+  }
+  rule collect_threshold_violations {
+    select when wovyn threshold_violation
+    pre {
+      temp = event:attr("temperature").as("Number")
+    }
+    
+    // if(temp > threshold) then 
+      send_directive("added violation", {"time": event:attr("timestamp"), "temp": temp});
+    
+    always {
+      ent:violation := ent:violation.put(event:attr("timestamp"), temp);
+    }
+  }
+  
+  rule clear_temeratures {
+    select when sensor reading_reset
+    
+    send_directive("cleared", {"time": time:now()});
+
+    always {
+      ent:temp := init;
+      ent:violation := init
+    }
+  }
+  
+  rule handle_request {
+    select when sensor tempsRequest
+    every {
+      send_directive("requested", {
+        "temps": ent:temp.keys().length(),
+        "from" : event:attr("requesterTx")
+      });
+      event:send(
+            {
+              "eci": event:attr("requesterTx"), "eid": "5",
+              "domain": "sensor", "type": "tempsResponse",
+              "attrs": {
+                "reportId" : event:attr("reportId"),
+                "responderRx" : Subscriptions:established("Tx", event:attr("requesterTx"))[0]{"Rx"}.klog(),
+                "temps" : ent:temp
+              } 
+            }
+      );
+    }
+  }
+}

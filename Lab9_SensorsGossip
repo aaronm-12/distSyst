@@ -1,0 +1,360 @@
+ruleset sensorsGosssip {
+  meta {
+    use module io.picolabs.subscription alias Subscriptions
+    
+    shares __testing, getPeer, prepareMessage, update, getSch, remSch
+    
+    logging on
+  }
+
+  global {
+    __testing = { 
+        "queries": [ 
+          // { "name": "getPeer", "args": [ ] },
+          // { "name": "prepareMessage", "args": [ ] },
+          // { "name": "update", "args": [ ] },
+          { "name": "getSch", "args": [ ] }
+
+
+          // { "name": "getTemperatures", "args": [ ] }
+        ],
+        "events": [ 
+          { "domain": "gossip", "type": "start", "attrs" : [] },
+          { "domain": "gossip", "type": "process", "attrs" : ["active"] },
+          { "domain": "gossip", "type": "updSch", "attrs" : ["n"] },
+          // { "domain": "gossip", "type": "seen","attrs": ["seen","eci"] },
+          // { "domain": "gossip", "type": "rumor", "attrs": [] },
+          // { "domain": "gossip", "type": "process", "attrs" : [] },
+          { "domain": "gossip", "type": "heartbeat", "attrs" : [] },
+          // { "domain": "gossip", "type": "newSeen", "attrs" : [] },
+          { "domain": "gossip", "type": "remSch", "attrs" : ["id"] },
+          { "domain": "gossip", "type": "newTemp", "attrs" : ["time", "temp"] },
+          { "domain": "gossip", "type": "newGossip", "attrs" : ["id", "eci"] }
+
+        ]
+    }
+    
+    sendRumor = defaction(toEci, rumor) {
+      event:send(
+          {
+            "eci": toEci.klog(), "eid": "1",
+            "domain": "gossip", "type": "rumor",
+            "attrs": {
+              "rumor" : rumor
+            } 
+          }
+      );
+    }
+    
+    sendSeen = defaction(toEci, fromEci, fromId, seen) {
+      event:send(
+          {
+            "eci": toEci.klog(), "eid": "1",
+            "domain": "gossip", "type": "seen",
+            "attrs": {
+              "seen" : seen,
+              "fromEci" : fromEci,
+              "fromId" : fromId
+            } 
+          }
+      );
+    }
+    
+    getSch = function() {
+      schedule:list()
+    }
+
+    
+    //returns what ones they need from us
+    getUnseen = function(ISeen, theySeen) {
+      unseen = ISeen.filter(function(v,k) {
+        theySeen{k} == null || theySeen{k} < v
+      });
+      
+      unseen.map(function(v,k) {
+        theySeen{k} == null => 0 | theySeen{k} + 1
+      })
+    }
+    
+    getTemp = function(seenElem) {
+      ent:temps{seenElem.keys()[0]}[seenElem.values()[0]].klog();
+    }
+    
+    getRumor = function(id, sequ) {
+      temp = getTemp({}.put(id, sequ));
+      {
+          "longId": id + ":" + sequ.as("String"),
+          "id": id,
+          "temp": temp{"temp"},
+          "time": temp{"time"}.klog()
+      }
+    }
+  }
+  
+  rule handleStart {
+    select when gossip start //wrangler ruleset_added 
+    pre {
+      
+    }
+  
+    send_directive("gossip", {"testing": "ruleset added"});
+    
+    always {
+      ent:seen := {};//{"him":1, "her":2}; //{id, sequ}
+      ent:temps := {}.put(meta:picoId, []); /*{
+        "him":[{"time":"now", "temp":10},{"time":"later", "temp":20}],
+        "her":[{"time":"now", "temp":10},{"time":"later", "temp":20},{"time":"never", "temp":30}]
+      }; */
+      ent:state := {};//{"0": {"him":1, "her":2}, "1": {"him":0} }; //{id:{id:sequ}}
+    
+      // raise gossip event "heartbeat";
+      schedule gossip event "heartbeat" repeat "*/10  *  * * * *" setting(yup); //sets var to id
+      ent:schId := yup;
+    }
+  }
+  
+  rule handleSeen {
+    select when gossip seen
+    pre {
+      unseen = getUnseen(ent:seen, event:attr("seen"));
+    }
+    
+    send_directive("gossip", {"testing": unseen});
+    
+    always {
+      raise gossip event "multipleRumorsReady"
+        attributes {
+          "rumors": unseen,
+          "toEci": event:attr("fromEci"),
+          "peer" : event:attr("fromId")
+        };
+        
+        ent:state{event:attr("fromId")} := event:attr("seen"); //fixes when they get out of sync
+    }
+  }
+  
+  rule sendRumors {
+    select when gossip multipleRumorsReady 
+    foreach event:attr("rumors") setting (v,k) 
+    
+    pre {
+      rumor = getRumor(k, v);
+    }
+    
+    sendRumor(event:attr("toEci"), rumor);
+    
+    always {
+        raise gossip event "stateChange" 
+          attributes {
+            "peer": event:attr("peer"), 
+            "id" : k
+          }
+    }
+  }
+  
+  rule handleRumor {
+    select when gossip rumor
+    pre {
+      messageTokens = event:attr("rumor"){"longId"}.split(re#:#)
+
+      id = messageTokens[0];
+      sequ = messageTokens[1];
+      isNext = ent:seen{id} == sequ.as("Number") - 1 
+        || (ent:seen{id} == null && sequ.as("Number") == 0);
+      // isNext = true;
+      
+      temp = event:attr("rumor"){"temp"};
+      time = event:attr("rumor"){"time"};
+      // temp = 1000;
+      // time = "end";
+      // id = "her";
+      
+      tempsLeng = ent:temps{id}.length();
+      
+      //could upd state
+    }
+    
+    if(isNext && ent:active.defaultsTo("on") == "on") then
+      noop();
+      
+    fired {
+      ent:temps{id} := tempsLeng == 0 => 
+        [{"time":time, "temp":temp}]
+        | ent:temps{id}.append({"time":time, "temp":temp});
+      ent:seen{id} := sequ.as("Number");
+      ent:state{[meta:picoId,id]} := sequ; //self
+      ent:state{[id,id]} := sequ;//sender
+    }
+  }
+  
+  rule handleProcess {
+    select when gossip process
+    
+    always {
+      ent:active := event:attr("active");
+    }
+  }
+  
+  rule handleHeartbeat {
+    select when gossip heartbeat
+    pre {
+      rand = random:integer(1); //0 rumor, 1 seen [0,1]
+    }
+    
+    send_directive("gossip", {"log": "heartbeat"});
+
+    always {
+      raise gossip event "heartbeatHelper" attributes {"rand": rand};
+    }
+  }
+  
+  rule sendingRumor {
+    select when gossip heartbeatHelper where event:attr("rand") == 0
+    pre {
+      peers = ent:state.filter(function(v,k) { //each sub
+          getUnseen(ent:seen, v).values().length() != 0
+        }).keys();
+        peer = peers[0]
+    }
+    
+    if(peer.klog() != null) then
+      noop();
+      
+    fired {
+      raise gossip event "sendingRumorHelper"
+        attributes { "peer":peer}
+    }
+  }
+  
+  rule sendingRumorFinal {
+    select when gossip sendingRumorHelper
+
+    pre {
+      peer = event:attr("peer");
+      
+      //get index
+      unseen = getUnseen(ent:seen, ent:state{peer}); //for that peer
+      rumor = getRumor(unseen.keys()[0], unseen.values()[0]);
+      
+      eci = ent:idToEci{peer};
+    }
+    
+    sendRumor(eci, rumor) 
+    
+    always {
+        raise gossip event "stateChange" 
+          attributes {
+            "peer": peer,
+            "id" : unseen.keys()[0]
+          }
+    }
+  }
+  
+  rule sendingSeen {
+    select when gossip heartbeatHelper where event:attr("rand") == 1
+    pre {
+      subs = Subscriptions:established("Tx_role","gossip"); //only gossips
+      // peers = ent:state.keys();
+      rand = random:integer(subs.length()-1);
+      toEci = subs[rand]{"Tx"};
+      fromEci = subs[rand]{"Rx"};
+      fromId = meta:picoId;
+    }
+    
+    sendSeen(toEci, fromEci, fromId, ent:seen);
+    
+  }
+  
+  rule updateState {
+    select when gossip stateChange
+    pre {
+      sequCurrent = ent:state{[event:attr("peer"), event:attr("id")]};
+    }
+    always {
+      ent:state{[event:attr("peer"), event:attr("id")]} := sequCurrent != null => 
+        sequCurrent + 1
+        | 0;
+    }
+  }
+  
+  //represent him
+  rule changeSeen {
+    select when gossip newSeen 
+    always {
+      ent:seen := {"him":0}; //{id, sequ}
+      tempsLen = ent:temps{id}.length();
+    }
+  }
+  
+  rule addTemp {
+    select when gossip newTemp 
+    pre {
+      id = meta:picoId;
+      nextSequ = ent:seen{id} != null => ent:seen{id} + 1 | 0;
+      tempsLeng = ent:temps{id}.length();
+    }
+    
+    always {
+      ent:seen{id} := nextSequ; 
+      // ent:temps{id} := tempsLeng == 0 => 
+      //   [{}.put(event:attr("time"), event:attr("temp"))]
+      //   | ent:temps{id}.append({}.put(event:attr("time"), event:attr("temp"))); 
+      ent:temps{id} := tempsLeng == 0 => 
+        [{"time":event:attr("time"), "temp":event:attr("temp")}]
+        | ent:temps{id}.append({"time":event:attr("time"), "temp":event:attr("temp")});
+      ent:state{[id,id]} := nextSequ; //for yourself
+    }
+  }
+  
+  rule estGossip {
+    select when gossip newGossip 
+    
+    always {
+      ent:idToEci := ent:idToEci.defaultsTo({}).put(event:attr("id"), event:attr("eci"));
+      ent:state{event:attr("id")} := {}; //for yourself
+    }
+  }
+  
+  rule changeSch {
+    select when gossip updSch 
+    pre {
+      sch = "*/" + event:attr("n") + " *  * * * *"
+    }
+    
+    if(ent:schId != null) then
+        schedule:remove(ent:schId);
+    
+    always {
+      //replace sch
+      
+      schedule gossip event "heartbeat" repeat sch setting(yup); //sets var to id
+      ent:schId := yup;
+    }
+    
+  }
+  
+  
+  // rule remAllSch {
+  //   select when gossip remAllSch 
+  //   foreach 
+  // }
+  
+  rule remSch {
+    select when gossip remSch
+    foreach schedule:list() setting (each)
+
+    if(each{"id"} != "cju4syza8009364sgsm0qf8ur") then
+      schedule:remove(each{"id"}.klog());
+  }
+  
+  rule auto_accept {
+    select when wrangler inbound_pending_subscription_added
+  
+    send_directive("say", {"subscription": "auto accepted"});
+    
+    fired {
+      raise wrangler event "pending_subscription_approval"
+        attributes event:attrs
+    }
+  }
+}

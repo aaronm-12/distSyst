@@ -1,0 +1,169 @@
+ruleset DriverGossip {
+  meta {
+    use module io.picolabs.subscription alias Subscriptions
+    
+    shares __testing
+    logging on
+  }
+  
+  global {
+    orders = {"s1":"order", "s2":"order2"}; //store:newestOrder
+    theySeen = {"d1":{"s1":"order", "s2":"order2"}, } //driver:store:id
+    
+    //returns orders that they haven't seen
+    // getUnseen = function(ISeen, theySeen) {
+    //   unseen = orders.filter(function(v,k) {
+    //     theySeen{k} == null || theySeen{k} < v
+    //   });
+      
+    //   unseen.map(function(v,k) {
+    //     theySeen{k} == null => 0 | theySeen{k} + 1
+    //   })
+    // }
+    
+    // getUnseen = function() {
+    //   unseen = theySeen.map(function(v,k) {
+    //     //switch sequ id with order or null
+    //     notSeen = v.map(function(vv,kk) {
+    //       myVv = orders{[kk,id,id]};
+    //       (vv < mVv) => orders{kk} | null
+    //     });
+    //     //remove stores with no orders
+    //     notSeen.filter(function(v,k) {
+    //       v != null;
+    //     })
+    //   });
+      
+    //   //remove drivers with no orders
+    //   unseen.filter(function(v,k) {
+    //     v != {} 
+    //   })
+    // }
+    
+    sendOrder = defaction(toEci, order) {
+      event:send(
+          {
+            "eci": toEci, "eid": "sending order",
+            "domain": "gossip", "type": "availableOrder",
+            "attrs": {
+              "order" : order
+            } 
+          }
+      );
+    }
+  }
+  
+  // rule sendRumorsToDrivers {
+  //   select when gossip rumorsReadyDrivers
+  //   foreach event:attr("rumors") setting(v,k) //v driverId, k order
+    
+  //   pre {
+  //     rumors = 
+  //   }
+    
+  //   always {
+  //     raise gossip event rumorsReadyStore
+  //       attributes {
+  //         "rumors" : rumors
+  //       }
+  //   }
+
+  // }
+  
+  // rule sendRumorsToStores {
+  //   select when gossip rumorsReadyStore
+  //   foreach event:attr("rumors") setting(v,k) //v order, k store
+    
+  //   pre {
+  //     toEci = Subscriptions:established("name", k);
+  //     info = v{"id"} + " to " + toEci;
+  //   }
+    
+  //   every {
+  //     send_directive("gossip", {"sendingRumor": info});
+  //     sendRumor(k, v);
+  //   }
+    
+  //   always {
+  //       // raise gossip event "stateChange" 
+  //       //   attributes {
+  //       //     "peer": event:attr("peer"), 
+  //       //     "id" : k
+  //       //   }
+  //   }
+  // }
+  
+  rule spreadOrdersToDrivers {
+    select when gossip ordersReadyDrivers
+    foreach theySeen setting(v,k) //v stores, k driver
+    
+    always {
+      raise gossip event ordersReady
+        attributes {
+          "driver" : k,
+          "stores" : v
+        }
+    }
+  }
+  
+  rule spreadOrders {
+    select when gossip ordersReady
+    foreach event:attr("stores") setting(v,k) //v order, k store
+    
+    pre {
+       toEci = Subscriptions:established("name", event:attr("driver"));
+       myV = orders{[kk,id,id]};
+       info = v{"id"} + " to " + toEci;  
+    }
+    
+    if(v < myV) then
+      every {
+        send_directive("gossip", {"sending order": info});
+        sendOrder(toEci, v);
+      }
+    
+    always {
+        // raise gossip event "stateChange" 
+        //   attributes {
+        //     "peer": event:attr("peer"), 
+        //     "id" : k
+        //   }
+    }
+  }
+  
+  // rule receiveOrder {
+  //   select when gossip newRumor
+  //   pre {
+  //     messageTokens = event:attr("rumor"){"longId"}.split(re#:#)
+
+  //     id = messageTokens[0];
+  //     sequ = messageTokens[1];
+  //     isNext = ent:seen{id} == sequ.as("Number") - 1 
+  //       || (ent:seen{id} == null && sequ.as("Number") == 0);
+  //     // isNext = true;
+      
+  //     temp = event:attr("rumor"){"temp"};
+  //     time = event:attr("rumor"){"time"};
+  //     // temp = 1000;
+  //     // time = "end";
+  //     // id = "her";
+      
+  //     tempsLeng = ent:temps{id}.length();
+      
+  //     //could upd state
+  //   }
+    
+  //   if(isNext && ent:active.defaultsTo("on") == "on") then
+  //     noop();
+      
+  //   fired {
+  //     ent:temps{id} := tempsLeng == 0 => 
+  //       [{"time":time, "temp":temp}]
+  //       | ent:temps{id}.append({"time":time, "temp":temp});
+  //     ent:seen{id} := sequ.as("Number");
+  //     ent:state{[meta:picoId,id]} := sequ; //self
+  //     ent:state{[id,id]} := sequ;//sender
+  //   }
+  // }
+  
+}
